@@ -1,0 +1,22 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "jstap: code_exec/access-policy@3.1.0",
+            "type": "python",
+            "request": "launch",
+            "console": "integratedTerminal",
+            "justMyCode": true,
+            "cwd": "/tmp/jstap", 
+            "python": "/home/yichao/Projects/compares/venv/bin/python3",
+            "program": "/home/yichao/Projects/compares/jstap/jstap",
+            "args": [
+                "/home/yichao/Projects/datasets/ds01_zeroday/code_exec/access-policy@3.1.0",
+                "--export-format", "gml"
+            ]
+        }, 
+    ]
+}

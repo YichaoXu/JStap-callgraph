@@ -103,7 +103,7 @@ class Node:
         return not self.children
 
     def is_statement(self):
-        statements = ['BlockStatement', 'BreakStatement', 'ContinueStatement', 'DoWhileStatement',
+        statements = ['BlockStatement', 'BreakStatement', 'ContinueStatement',  'DoWhileStatement',
                       'DebuggerStatement', 'EmptyStatement', 'ExpressionStatement', 'ForStatement',
                       'ForOfStatement', 'ForInStatement', 'IfStatement', 'LabeledStatement',
                       'ReturnStatement', 'SwitchStatement', 'ThrowStatement', 'TryStatement',
@@ -121,7 +121,7 @@ class Node:
         return False
 
     def get_attribute(self, attribute_type):
-        return self.attributes[attribute_type]
+        return self.attributes.get(attribute_type, None)
 
     def get_type(self):
         return self.get_attribute('type')

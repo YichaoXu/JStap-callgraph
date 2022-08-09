@@ -19,8 +19,8 @@
 import logging
 import copy
 
-import js_reserved
-import var_list
+from . import js_reserved
+from . import var_list
 
 
 DECLARATIONS = ['VariableDeclaration', 'FunctionDeclaration']

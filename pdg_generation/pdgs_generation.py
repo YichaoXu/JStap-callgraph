@@ -17,24 +17,23 @@
     defined in utility_df.py).
 """
 
-import pickle
-import psutil
+import pickle, psutil
 from multiprocessing import Process, Queue
+from typing import Callable, Generator, List, Optional
 
-from utility_df import *
-from handle_json import *
-from build_cfg import *
-from build_dfg import *
-from var_list import *
-from display_graph import *
+from .utility_df import *
+from .handle_json import *
+from .build_cfg import *
+from .build_dfg import *
+from .var_list import *
+from .display_graph import *
 
 
 GIT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
 
 
-def pickle_dump_process(dfg_nodes, store_pdg):
+def pickle_dump_process(dfg_nodes: Node, store_pdg):
     """ Call to pickle.dump """
-
     pickle.dump(dfg_nodes, open(store_pdg, 'wb'))
 
 
@@ -106,7 +105,7 @@ def get_data_flow(input_file, benchmarks, store_pdgs=None, check_var=False,
         benchmarks['PDG'] = timeit.default_timer() - start
         micro_benchmark('Successfully produced the PDG in', timeit.default_timer() - start)
         if store_pdgs is not None:
-            store_pdg = os.path.join(store_pdgs, os.path.basename(input_file.replace('.js', '')))
+            store_pdg = os.path.join(store_pdgs, os.path.basename(input_file.replace('.js', '.pickle')))
             # pickle.dump(dfg_nodes, open(store_pdg, 'wb'))
             # I don't know why, but some PDGs lead to Segfault, this way it does not kill the
             # current process at least
@@ -121,28 +120,38 @@ def get_data_flow(input_file, benchmarks, store_pdgs=None, check_var=False,
     return None
 
 
-def handle_one_pdg(root, js, store_pdgs):
+def handle_one_pdg(root, js, pdg_store_dir):
     """ Stores the PDG of js located in root, in store_pdgs. """
+    return get_data_flow(
+        input_file=os.path.join(root, js), 
+        benchmarks=dict(), 
+        store_pdgs=pdg_store_dir
+    )
 
-    benchmarks = dict()
-    print(os.path.join(store_pdgs, js.replace('.js', '')))
-    get_data_flow(input_file=os.path.join(root, js), benchmarks=benchmarks,
-                  store_pdgs=store_pdgs)
-
-
-def worker(my_queue):
+def worker(input: Queue, output: Queue):
     """ Worker """
-
     while True:
         try:
-            item = my_queue.get(timeout=2)
-            # print(item)
-            handle_one_pdg(item[0], item[1], item[2])
-        except Exception as e:
+            in_dir, js_relpath, out_dir = input.get(timeout=2)
+            jstap_pdg = handle_one_pdg(in_dir, js_relpath, out_dir)
+            if jstap_pdg is not None: output.put((js_relpath, jstap_pdg))
+        except Exception:
             break
+    pass
 
+def __find_all_files(under: str, is_satisfied: Callable[[str], bool]) -> Generator[str, None, None]: 
+    under = os.path.abspath(under)
+    files, subdirs = set(), set()
+    for sub in sorted(os.listdir(under)): 
+        sub_dir = os.path.join(under, sub)
+        if os.path.isfile(sub_dir): files.add(sub)
+        if os.path.isdir(sub_dir): subdirs.add(sub_dir)
+    for file in files: 
+        if is_satisfied(file):  yield os.path.abspath(os.path.join(under, file))
+    for sub_dir in subdirs: yield from __find_all_files(sub_dir, is_satisfied)        
+    pass
 
-def store_pdg_folder(folder_js):
+def store_pdg_folder(input_dir: str, output_dir: Optional[str]=None) -> List[str]:
     """
         Stores the PDGs of the JS files from folder_js.
 
@@ -156,29 +165,33 @@ def store_pdg_folder(folder_js):
     ram = psutil.virtual_memory().used
     # benchmarks = dict()
 
-    my_queue = Queue()
     workers = list()
+    jsfile_queue, pdg_queue = Queue(), Queue()
 
-    if not os.path.exists(folder_js):
-        logging.exception('The path %s does not exist', folder_js)
-        return
-    store_pdgs = os.path.join(folder_js, 'Analysis', 'PDG')
-    if not os.path.exists(store_pdgs):
-        os.makedirs(store_pdgs)
+    if not os.path.exists(input_dir): 
+        return logging.exception('The path %s does not exist', input_dir)
+    
+    if output_dir is not None: 
+        output_dir = os.path.abspath(output_dir)
+        os.makedirs(output_dir, exist_ok=True)
 
-    for root, _, files in os.walk(folder_js):
-        for js in files:
-            my_queue.put([root, js, store_pdgs])
-            # time.sleep(0.1)  # Just enough to let the Queue finish
+    for fpath in __find_all_files(input_dir, lambda fn:fn.endswith('.js')): 
+        jsfile_relpath = fpath.removeprefix(input_dir)
+        jsfile_relpath = jsfile_relpath.removeprefix('/')
+        gpfile_relpath = f"{jsfile_relpath.removesuffix('.js')}.pickle"
+        if os.path.isfile(gpfile_relpath): continue
+        jsfile_queue.put([input_dir, jsfile_relpath, output_dir]) # None means not output as a file.
 
     for i in range(NUM_WORKERS):
-        p = Process(target=worker, args=(my_queue,))
+        p = Process(target=worker, args=(jsfile_queue, pdg_queue))
         p.start()
-        print("Starting process")
+        print(f"Starting process {i}")
         workers.append(p)
 
-    for w in workers:
-        w.join()
+    for w in workers: w.join()
 
     get_ram_usage(psutil.virtual_memory().used - ram)
     micro_benchmark('Total elapsed time:', timeit.default_timer() - start)
+    def get_data(): 
+        while not pdg_queue.empty(): yield pdg_queue.get_nowait() 
+    return list(get_data())

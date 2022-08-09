@@ -24,8 +24,8 @@ import json
 import os
 from subprocess import run, PIPE
 
-from node import *
-from extended_ast import *
+from .node import *
+from .extended_ast import *
 
 SRC_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__)))
 

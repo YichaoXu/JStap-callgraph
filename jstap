@@ -1,0 +1,117 @@
+from networkx import MultiDiGraph as NxMdGraph
+from pdg_generation import store_pdg_folder
+from argparse import ArgumentParser
+from typing import Set, List, Tuple
+
+from pdg_generation.node import Node as JstapNode
+import os, json, networkx
+
+def translate_to_nx(js_path: str, f_jstap: JstapNode) -> NxMdGraph: 
+    out_graph = NxMdGraph()
+    traversed: Set[str] = set()
+    char_count: int = 0
+    linenum_count: List[int] = [char_count]
+    with open(js_path, 'r') as jsfile: 
+        for each_line in jsfile.readlines():
+            char_count += len(each_line)
+            linenum_count.append(char_count)
+        pass
+    def to_namespace(in_range: Tuple[int, int]) -> str: 
+        if in_range is None: return '-1:-1:-1:-1'
+        start, end = in_range
+        s_row, s_col, e_row, e_col = 0, 0, 0, 0
+        for cur_row in range(len(linenum_count)): 
+            cur_count = linenum_count[cur_row]
+            if start >= cur_count:continue
+            s_row = cur_row-1 # cur_row starts from 0
+            prev_count = linenum_count[s_row] if cur_row>1 else 0
+            s_col = start - prev_count
+            break; 
+        for cur_row in range(s_row, len(linenum_count)): 
+            cur_count = linenum_count[cur_row]
+            if end >= cur_count: continue
+            e_row = cur_row-1 # cur_row starts from 0
+            prev_count = linenum_count[s_row] if cur_row>1 else 0
+            e_col = end - prev_count
+            break; 
+        to_str = lambda v: str(v) if v > 0 else ""
+        return ':'.join([to_str(s_row), to_str(s_col), to_str(e_row), to_str(e_col)])
+
+    def __add_edge(fnode: JstapNode, tnode: JstapNode, etype: str): 
+        if fnode is None or tnode is None: return None
+        fid_str = str(fnode.get_id())
+        tid_str = str(tnode.get_id())
+        etype_str = str(etype)
+        if out_graph.has_edge(fid_str, tid_str, etype_str): return None
+        return out_graph.add_edge(fid_str, tid_str, key=etype_str)
+
+    def __add_node(fnode: JstapNode, label: str=None): 
+        fid_str = str(fnode.get_id())
+        if fid_str in traversed: return 
+        traversed.add(fid_str)
+        n_attrs = fnode.attributes | {
+            'label': str(label),
+            'name': str(fnode.get_name()), 
+            'body': str(fnode.get_body()), 
+            'range': to_namespace(fnode.get_range()), 
+            'type': str(fnode.get_type()), 
+            'value': str(fnode.get_value())
+        } 
+        out_graph.add_node(fid_str, **n_attrs)
+        for child in fnode.children: 
+            __add_node(child)
+            __add_edge(fnode, child, 'PARENT_OF')
+        # !TODO: WE ASSUME THAT THERE ARE NO UNDEFINED EDGE_TYPE
+        for ctrl_dep in fnode.control_dep_children: 
+            __add_node(ctrl_dep.extremity)
+            __add_edge(fnode, ctrl_dep.extremity, 'FLOWS_TO')
+        for cmnt_dep in fnode.comment_dep_children: 
+            __add_node(cmnt_dep.extremity)
+            __add_edge(fnode, cmnt_dep.extremity, 'COMMENTS_TO')
+        for data_dep in fnode.data_dep_children: 
+            __add_node(data_dep.extremity)
+            __add_edge(fnode, data_dep.extremity, 'DATA_FLOWS')
+        for stmt_dep in fnode.statement_dep_children:
+            __add_node(stmt_dep.extremity)
+            __add_edge(fnode, stmt_dep.extremity, 'STMT_FLOWS')
+    __add_node(f_jstap)
+    return out_graph
+
+if __name__ == '__main__': 
+    main_parser = ArgumentParser(
+        description='Generate the PDG graphs basing all files under input dir'
+    )
+    main_parser.add_argument(
+        'target_dir', action='store', nargs='?',
+        help='path for the root directory of target js files'
+    )
+    main_parser.add_argument(
+        '--output-dir', type=str, default='./jstap.output',
+        help='path to output, default: "./jstap.output"'
+    )
+    main_parser.add_argument(
+        '--export-format', type=str, default='json', choices=['json', 'gml'], 
+        help = 'format to export, default: "json"'
+    )
+    main_parser.add_argument(
+        '--printdebug', action='store_true', default=False, 
+        help='output information for debugging'
+    )
+    main_parser.add_argument(
+        '--use-cache', action='store_true', default=False, 
+        help='use the cache files in output directory'
+    )
+    options = main_parser.parse_args()
+    tar_dir, out_dir = options.target_dir, os.path.abspath(options.output_dir)
+    for js_relpath, jstap_pdg in store_pdg_folder(tar_dir, None): 
+        pdg_nx = translate_to_nx(os.path.join(tar_dir, js_relpath), jstap_pdg)
+        if options.export_format == 'json': 
+            gdict = networkx.node_link_data(pdg_nx)
+            fpath = os.path.join(out_dir, f"{js_relpath}.gjson")
+            os.makedirs(os.path.dirname(fpath), exist_ok=True)
+            json.dump(gdict, open(fpath, 'w'))
+        elif options.export_format == 'gml': 
+            fpath = os.path.join(out_dir, f"{js_relpath}.gml")
+            os.makedirs(os.path.dirname(fpath), exist_ok=True)
+            networkx.write_gml(pdg_nx, fpath, stringizer=str)
+    print('✔ Finish graph exported')
